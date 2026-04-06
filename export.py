@@ -29,7 +29,7 @@ def build_excel_bytes(
     """
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "Auswertung"
+    ws.title = "Breakdown"
 
     d_from: date | None = meta.get("date_from")
     d_to:   date | None = meta.get("date_to")
@@ -119,8 +119,11 @@ def build_excel_bytes(
     # ── Autofilter ────────────────────────────────────────────────────────────
     ws.auto_filter.ref = f"A2:{get_column_letter(n_cols)}2"
 
-    # ── Analyse-Sheet ─────────────────────────────────────────────────────────
+    # ── Analysis-Sheet ────────────────────────────────────────────────────────
     _build_analyse_sheet(wb, df, soll)
+
+    # Analysis-Sheet als aktives Blatt beim Öffnen setzen
+    wb.active = wb["Analysis"]
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -138,7 +141,7 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float) -
     GREEN_LIGHT = "E2EFDA"  # hellgrün alternierend
     ORANGE     = "FCE4D6"   # orange für Mehrarbeit-Spalten
 
-    ws = wb.create_sheet("Analyse")
+    ws = wb.create_sheet("Analysis")
 
     # Englische Spaltennamen (müssen mit app.py übereinstimmen)
     COL_REISE_NIGHT_SH  = "Travel: nights & Sun/holidays"
@@ -160,7 +163,12 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float) -
         "Nights & Sun/holidays",
         "Nights",
         "Sun/holidays",
+        "Days of paid leave",
+        "Days of sick leave",
+        "Notes",
     ]
+
+    MANUAL_COLS = {"Days of paid leave", "Days of sick leave", "Notes"}
 
     # Styling
     hdr_fill  = PatternFill("solid", fgColor=GREEN)
@@ -194,24 +202,27 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float) -
         aw_row    = r_idx + 1   # entsprechende Zeile im Auswertungs-Sheet
 
         # Formeln – Excel speichert intern englische Namen; Semikolon für IF→WENN
-        f_gesamt      = f"=Auswertung!F{aw_row}+Auswertung!K{aw_row}"
+        f_gesamt      = f"=Breakdown!F{aw_row}+Breakdown!K{aw_row}"
         f_mehrarbeit  = f"=B{r_idx}-C{r_idx}"
-        f_meh_reise   = f"=IF(D{r_idx}<=Auswertung!F{aw_row},D{r_idx},Auswertung!F{aw_row})"
+        f_meh_reise   = f"=IF(D{r_idx}<=Breakdown!F{aw_row},D{r_idx},Breakdown!F{aw_row})"
         f_meh_arbeit  = f"=D{r_idx}-E{r_idx}"
-        f_night_sh    = f"=Auswertung!G{aw_row}+Auswertung!B{aw_row}"
-        f_night       = f"=Auswertung!H{aw_row}+Auswertung!C{aw_row}"
-        f_sun_hol     = f"=Auswertung!I{aw_row}+Auswertung!D{aw_row}"
+        f_night_sh    = f"=Breakdown!G{aw_row}+Breakdown!B{aw_row}"
+        f_night       = f"=Breakdown!H{aw_row}+Breakdown!C{aw_row}"
+        f_sun_hol     = f"=Breakdown!I{aw_row}+Breakdown!D{aw_row}"
 
         values = [
             row["Employee"],  # A – Wert, kein Formel nötig
-            f_gesamt,            # B
-            soll,                # C – fixer Wert (Werktage × 8h)
-            f_mehrarbeit,        # D
-            f_meh_reise,         # E
-            f_meh_arbeit,        # F
-            f_night_sh,          # G
-            f_night,             # H
-            f_sun_hol,           # I
+            f_gesamt,         # B
+            soll,             # C – fixer Wert (Werktage × 8h)
+            f_mehrarbeit,     # D
+            f_meh_reise,      # E
+            f_meh_arbeit,     # F
+            f_night_sh,       # G
+            f_night,          # H
+            f_sun_hol,        # I
+            None,             # J – Days of paid leave (manuell)
+            None,             # K – Days of sick leave (manuell)
+            None,             # L – Notes (manuell)
         ]
 
         for c_idx, val in enumerate(values, start=1):
@@ -221,6 +232,12 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float) -
             if c_idx == 1:  # Employee
                 cell.font      = Font(bold=True, size=10)
                 cell.alignment = Alignment(vertical="center")
+                if use_alt:
+                    cell.fill = alt_fill
+
+            elif headers[c_idx - 1] in MANUAL_COLS:
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+                cell.font      = Font(size=10)
                 if use_alt:
                     cell.fill = alt_fill
 
@@ -240,8 +257,13 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float) -
 
     # Spaltenbreiten
     ws.column_dimensions["A"].width = 24
-    for c_idx in range(2, len(headers) + 1):
-        ws.column_dimensions[get_column_letter(c_idx)].width = 20
+    for c_idx, h in enumerate(headers[1:], start=2):
+        if h == "Notes":
+            ws.column_dimensions[get_column_letter(c_idx)].width = 30
+        elif h in ("Days of paid leave", "Days of sick leave"):
+            ws.column_dimensions[get_column_letter(c_idx)].width = 18
+        else:
+            ws.column_dimensions[get_column_letter(c_idx)].width = 20
 
     ws.freeze_panes = "B2"
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
