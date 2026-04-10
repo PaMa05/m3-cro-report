@@ -165,16 +165,15 @@ def _calc_soll_hours(d0: date, d1: date, holiday_set: set[date]) -> float:
 
 def _read_extra_cols(path: Path) -> tuple[dict, list[str]]:
     """
-    Reads optional columns 'Effektive Arbeitsstunden' and 'Bruttolohn' from the
-    Excel file.  Returns:
-      extra  – dict  employee → {"eff_arb": float | None, "bruttolohn": float | None}
+    Reads the LAST column of the input Excel as 'Bruttolohn' per employee.
+    Returns:
+      extra  – dict  employee → {"bruttolohn": float}
       warns  – list of warning strings for inconsistent values per employee
     """
     import pandas as pd
 
     df = pd.read_excel(path, engine="openpyxl")
 
-    # Build employee key (same logic as _parse_excel)
     if "Vorname (bürgerlich)" not in df.columns or "Nachname (bürgerlich)" not in df.columns:
         return {}, []
 
@@ -184,31 +183,25 @@ def _read_extra_cols(path: Path) -> tuple[dict, list[str]]:
         + df["Nachname (bürgerlich)"].astype(str).str.strip()
     )
 
+    last_col = df.columns[-1]
+    brutto_vals = pd.to_numeric(df[last_col], errors="coerce")
+
     extra: dict[str, dict] = {}
     warns: list[str] = []
 
-    for col_name, agg_fn, key in [
-        ("Effektive Arbeitsstunden", "max", "eff_arb"),
-        ("Bruttolohn",              "min", "bruttolohn"),
-    ]:
-        if col_name not in df.columns:
-            continue
+    tmp = pd.DataFrame({"emp": emp_series, "val": brutto_vals}).dropna(subset=["val"])
+    if tmp.empty:
+        return {}, []
 
-        tmp = pd.DataFrame({"emp": emp_series, "val": pd.to_numeric(df[col_name], errors="coerce")})
-        tmp = tmp.dropna(subset=["val"])
-        if tmp.empty:
-            continue
-
-        for emp, grp in tmp.groupby("emp"):
-            unique_vals = grp["val"].unique()
-            if len(unique_vals) > 1:
-                warns.append(
-                    f"⚠️ '{col_name}' has multiple values for {emp} "
-                    f"({', '.join(str(v) for v in sorted(unique_vals))}) — "
-                    f"using {'highest' if agg_fn == 'max' else 'lowest'} value."
-                )
-            chosen = float(grp["val"].max() if agg_fn == "max" else grp["val"].min())
-            extra.setdefault(str(emp), {})[key] = chosen
+    for emp, grp in tmp.groupby("emp"):
+        unique_vals = grp["val"].unique()
+        if len(unique_vals) > 1:
+            warns.append(
+                f"⚠️ Bruttolohn (column '{last_col}') has multiple values for **{emp}** "
+                f"({', '.join(str(round(v, 2)) for v in sorted(unique_vals))}) — "
+                f"using the lowest value."
+            )
+        extra[str(emp)] = {"bruttolohn": float(grp["val"].min())}
 
     return extra, warns
 
@@ -289,24 +282,21 @@ def evaluate_excel(path: Path, holiday_mode: str = "DE-NW"):
         for cat in CATEGORIES:
             out[emp].setdefault(cat, 0.0)
 
-    # ── Extra columns (optional) ──────────────────────────────────────────────
+    soll = _calc_soll_hours(min_dt.date(), max_dt.date(), holiday_set)
+
+    # ── Extra columns (optional: Bruttolohn from last input column) ───────────
     extra, extra_warns = _read_extra_cols(path)
 
     warnings_list: list[str] = extra_warns
 
     for emp in out:
-        ed = extra.get(emp, {})
-        eff_arb   = ed.get("eff_arb")
-        bruttolohn = ed.get("bruttolohn")
-
-        out[emp]["__eff_arb__"]    = eff_arb    # float or None
-        out[emp]["__bruttolohn__"] = bruttolohn  # float or None
-        if eff_arb and eff_arb > 0 and bruttolohn is not None:
-            out[emp]["__stundenlohn__"] = round(bruttolohn / eff_arb, 4)
+        bruttolohn = extra.get(emp, {}).get("bruttolohn")
+        out[emp]["__bruttolohn__"] = bruttolohn   # float or None
+        # Stundenlohn = Bruttolohn / potential working hours in the period
+        if bruttolohn is not None and soll > 0:
+            out[emp]["__stundenlohn__"] = round(bruttolohn / soll, 4)
         else:
             out[emp]["__stundenlohn__"] = None
-
-    soll = _calc_soll_hours(min_dt.date(), max_dt.date(), holiday_set)
 
     meta = {
         "date_from": min_dt.date(),

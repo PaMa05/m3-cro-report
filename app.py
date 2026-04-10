@@ -333,11 +333,8 @@ for emp in employees:
         row[en] = round(d.get(de, 0.0), 2)
     row[SUM_ARBEIT] = round(sum(d.get(de, 0.0) for de in _ARBEITSZEIT_DE), 2)
 
-    # Use per-employee Effektive Arbeitsstunden if available, else fall back to period soll
-    eff_arb = d.get("__eff_arb__")
-    emp_soll = round(eff_arb, 2) if eff_arb else round(soll, 2)
-    row[SOLL_COL]  = emp_soll
-    row[UEBER_COL] = round(row[SUM_ARBEIT] - emp_soll, 2)
+    row[SOLL_COL]  = round(soll, 2)
+    row[UEBER_COL] = round(row[SUM_ARBEIT] - soll, 2)
 
     # Optional pay columns
     bruttolohn  = d.get("__bruttolohn__")
@@ -471,12 +468,12 @@ def make_excel(df_json: str, meta_serializable: dict, holiday_label: str) -> byt
 
 
 @st.cache_data(show_spinner=False)
-def make_excel_tax(df_json: str, meta_serializable: dict, holiday_label: str) -> bytes:
-    """Analysis-only sheet for tax office (Steuerbüro) — cached."""
+def make_excel_breakdown(df_analyse_json: str, meta_serializable: dict, holiday_label: str) -> bytes:
+    """Standalone Breakdown sheet for Steuerbüro — cached."""
     import io
-    from export import build_breakdown_only_bytes
-    df_export = pd.read_json(io.StringIO(df_json), orient="split")
-    return build_breakdown_only_bytes(df_export, meta_serializable, holiday_label)
+    from export import build_breakdown_standalone_bytes
+    df_export = pd.read_json(io.StringIO(df_analyse_json), orient="split")
+    return build_breakdown_standalone_bytes(df_export, meta_serializable, holiday_label)
 
 
 meta_for_cache = {
@@ -485,10 +482,11 @@ meta_for_cache = {
     "soll_hours": soll,
 }
 
-df_json = df.to_json(orient="split")
+df_json         = df.to_json(orient="split")
+df_analyse_json = df_analyse.to_json(orient="split")
 
 excel_bytes     = make_excel(df_json, meta_for_cache, holiday_label)
-excel_tax_bytes = make_excel_tax(df_json, meta_for_cache, holiday_label)
+excel_tax_bytes = make_excel_breakdown(df_analyse_json, meta_for_cache, holiday_label)
 
 timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
 
@@ -505,9 +503,9 @@ with dl_col1:
 
 with dl_col2:
     st.download_button(
-        label="⬇️  Tax office (Analysis only)",
+        label="⬇️  Download Breakdown (Steuerbüro)",
         data=excel_tax_bytes,
-        file_name=f"report_tax_{timestamp}.xlsx",
+        file_name=f"breakdown_{timestamp}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
     )

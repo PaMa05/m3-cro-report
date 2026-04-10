@@ -86,16 +86,123 @@ def _fill_analysis_sheet(
     ws.auto_filter.ref = f"A2:{get_column_letter(n_cols)}2"
 
 
-def build_breakdown_only_bytes(
-    df: pd.DataFrame,
+def _fill_breakdown_standalone_sheet(
+    ws,
+    df_analyse: pd.DataFrame,
+    meta: dict[str, Any],
+    holiday_label: str,
+) -> None:
+    """
+    Fills a Breakdown sheet with standalone computed values.
+    df_analyse already contains all calculated columns; manual columns
+    (Days of paid leave, Days of sick leave, Notes) are appended as empty.
+    """
+    GREEN       = "375623"
+    GREEN_LIGHT = "E2EFDA"
+    ORANGE      = "FCE4D6"
+
+    d_from: date | None = meta.get("date_from")
+    d_to:   date | None = meta.get("date_to")
+
+    # Title row
+    all_headers = list(df_analyse.columns) + ["Days of paid leave", "Days of sick leave", "Notes"]
+    n_cols = len(all_headers)
+
+    period_str = (
+        f"{d_from.strftime('%d.%m.%Y')} – {d_to.strftime('%d.%m.%Y')}"
+        if d_from and d_to else "–"
+    )
+    title_text = f"M3 Croatia – Breakdown   |   {period_str}   |   Holidays: {holiday_label}"
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n_cols)
+    tc = ws.cell(row=1, column=1, value=title_text)
+    tc.font      = Font(bold=True, color="FFFFFF", size=12)
+    tc.fill      = PatternFill("solid", fgColor=GREEN)
+    tc.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 28
+
+    hdr_fill  = PatternFill("solid", fgColor=GREEN)
+    hdr_font  = Font(bold=True, color="FFFFFF", size=10)
+    hdr_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for c_idx, h in enumerate(all_headers, start=1):
+        cell = ws.cell(row=2, column=c_idx, value=h)
+        cell.font = hdr_font; cell.fill = hdr_fill; cell.alignment = hdr_align
+    ws.row_dimensions[2].height = 44
+
+    alt_fill  = PatternFill("solid", fgColor=GREEN_LIGHT)
+    ora_fill  = PatternFill("solid", fgColor=ORANGE)
+    thin_side = Side(style="thin", color="CCCCCC")
+    thin_bdr  = Border(bottom=thin_side, right=Side(style="thin", color="E0E0E0"))
+    num_fmt   = '#,##0.00" h"'
+    eur_fmt   = '#,##0.00" €"'
+    eur4_fmt  = '#,##0.0000" €"'
+
+    OVERTIME_COLS = {"Overtime total", "Overtime travel (110%)", "Overtime work (110%)"}
+    MANUAL_COLS   = {"Days of paid leave", "Days of sick leave", "Notes"}
+    PAY_COLS      = {"Bruttolohn (€)", "Stundenlohn (€)"}
+
+    for r_idx, (_, row) in enumerate(df_analyse.iterrows(), start=3):
+        use_alt = (r_idx % 2 == 0)
+        for c_idx, h in enumerate(all_headers, start=1):
+            val = row[h] if h in df_analyse.columns else None
+            cell = ws.cell(row=r_idx, column=c_idx, value=val)
+            cell.border = thin_bdr
+
+            if h == "Employee":
+                cell.font = Font(bold=True, size=10)
+                cell.alignment = Alignment(vertical="center")
+                if use_alt: cell.fill = alt_fill
+            elif h in MANUAL_COLS:
+                cell.font = Font(size=10)
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+                if use_alt: cell.fill = alt_fill
+            elif h in OVERTIME_COLS:
+                cell.fill          = ora_fill
+                cell.number_format = num_fmt
+                cell.alignment     = Alignment(horizontal="right", vertical="center")
+                is_neg = isinstance(val, (int, float)) and val < 0
+                cell.font = Font(bold=True, size=10,
+                                 color=(RED_FONT if is_neg else "000000"))
+            elif h == "Stundenlohn (€)":
+                cell.number_format = eur4_fmt
+                cell.alignment     = Alignment(horizontal="right", vertical="center")
+                cell.font          = Font(size=10)
+                if use_alt: cell.fill = alt_fill
+            elif h in PAY_COLS:
+                cell.number_format = eur_fmt
+                cell.alignment     = Alignment(horizontal="right", vertical="center")
+                cell.font          = Font(size=10)
+                if use_alt: cell.fill = alt_fill
+            else:
+                cell.number_format = num_fmt
+                cell.alignment     = Alignment(horizontal="right", vertical="center")
+                cell.font          = Font(size=10)
+                if use_alt: cell.fill = alt_fill
+
+    # Column widths
+    ws.column_dimensions["A"].width = 24
+    for c_idx, h in enumerate(all_headers[1:], start=2):
+        if h == "Notes":
+            ws.column_dimensions[get_column_letter(c_idx)].width = 30
+        elif h in ("Days of paid leave", "Days of sick leave"):
+            ws.column_dimensions[get_column_letter(c_idx)].width = 18
+        else:
+            ws.column_dimensions[get_column_letter(c_idx)].width = 20
+
+    ws.freeze_panes = "B3"
+    ws.auto_filter.ref = f"A2:{get_column_letter(n_cols)}2"
+
+
+def build_breakdown_standalone_bytes(
+    df_analyse: pd.DataFrame,
     meta: dict[str, Any],
     holiday_label: str,
 ) -> bytes:
-    """Only the Analysis sheet (8 categories) — for tax office."""
+    """Standalone Breakdown sheet (computed values, no cross-sheet formulas) — for Steuerbüro."""
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "Analysis"
-    _fill_analysis_sheet(ws, df, meta, holiday_label)
+    ws.title = "Breakdown"
+    _fill_breakdown_standalone_sheet(ws, df_analyse, meta, holiday_label)
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
