@@ -515,59 +515,10 @@ with dl_col2:
 # ── Email ─────────────────────────────────────────────────────────────────────
 st.divider()
 
+import urllib.parse
+
 _FIXED_TO  = "franka.grandes@vlahov.com"
 _FIXED_CC  = ["a.privara@m3connect.hr", "Hr@m3connect.de"]
-
-def _send_email(
-    to_addrs: list[str],
-    cc_addrs: list[str],
-    subject: str,
-    body: str,
-    attachment: bytes,
-    attachment_name: str,
-) -> None:
-    """Send an email via SMTP using credentials from st.secrets."""
-    import smtplib
-    import ssl
-    from email.mime.base import MIMEBase
-    from email.mime.multipart import MIMEMultipart
-    from email.mime.text import MIMEText
-    from email import encoders
-
-    cfg = st.secrets.get("email", {})
-    smtp_server = cfg.get("smtp_server", "")
-    smtp_port   = int(cfg.get("smtp_port", 587))
-    username    = cfg.get("username", "")
-    password    = cfg.get("password", "")
-
-    if not smtp_server or not username or not password:
-        raise ValueError(
-            "Email not configured. Add [email] section to Streamlit secrets "
-            "(smtp_server, smtp_port, username, password)."
-        )
-
-    msg = MIMEMultipart()
-    msg["From"]    = username
-    msg["To"]      = ", ".join(to_addrs)
-    if cc_addrs:
-        msg["Cc"]  = ", ".join(cc_addrs)
-    msg["Subject"] = subject
-    msg.attach(MIMEText(body, "plain"))
-
-    part = MIMEBase("application", "octet-stream")
-    part.set_payload(attachment)
-    encoders.encode_base64(part)
-    part.add_header("Content-Disposition", f'attachment; filename="{attachment_name}"')
-    msg.attach(part)
-
-    all_recipients = to_addrs + cc_addrs
-    context = ssl.create_default_context()
-    with smtplib.SMTP(smtp_server, smtp_port) as server:
-        server.ehlo()
-        server.starttls(context=context)
-        server.login(username, password)
-        server.sendmail(username, all_recipients, msg.as_string())
-
 
 period_str = (
     f"{d_from.strftime('%d.%m.%Y')} – {d_to.strftime('%d.%m.%Y')}"
@@ -577,73 +528,59 @@ email_subject = f"M3 Croatia Time & Travel Report – {period_str}"
 email_body    = (
     f"Dear Franka,\n\n"
     f"please find attached the Croatia Time & Travel Analysis for the period {period_str}.\n\n"
-    f"Best regards,\nM3 CRO Report"
+    f"Best regards,\nM3 HR"
 )
 
-with st.expander("📧  Send report by email", expanded=False):
-    _email_configured = bool(st.secrets.get("email", {}).get("smtp_server"))
+def _mailto_link(to: str, cc: list[str], subject: str, body: str) -> str:
+    params = urllib.parse.urlencode(
+        {"cc": ",".join(cc), "subject": subject, "body": body},
+        quote_via=urllib.parse.quote,
+    )
+    return f"mailto:{urllib.parse.quote(to)}?{params}"
 
-    if not _email_configured:
-        st.info(
-            "**Email sending is not yet configured.**\n\n"
-            "To enable it, add an `[email]` section to your Streamlit secrets:\n"
-            "```toml\n"
-            "[email]\n"
-            'smtp_server = "smtp.office365.com"   # or smtp.gmail.com\n'
-            "smtp_port   = 587\n"
-            'username    = "your@email.com"\n'
-            'password    = "your-app-password"\n'
-            "```\n"
-            "For Gmail, create an **App Password** under Google Account → Security.\n"
-            "For Office 365, use your regular password or an app password if MFA is on."
+with st.expander("📧  Open in Outlook / Mail", expanded=False):
+    st.caption(
+        "Clicking the button opens your default mail client (Outlook) with "
+        "recipients, subject and body pre-filled. "
+        "Please attach the downloaded Excel file manually before sending."
+    )
+
+    # ── Custom address ────────────────────────────────────────────────────────
+    st.markdown("**Send to a custom address**")
+    custom_addr = st.text_input(
+        "Email address", placeholder="you@example.com",
+        label_visibility="collapsed", key="custom_email_addr",
+    )
+    if custom_addr:
+        custom_link = _mailto_link(
+            to=custom_addr, cc=[],
+            subject=f"[TEST] {email_subject}",
+            body=email_body,
         )
-    else:
         st.markdown(
-            f"**Fixed recipients:** {_FIXED_TO}  \n"
-            f"**CC:** {', '.join(_FIXED_CC)}"
+            f'<a href="{custom_link}" target="_blank">'
+            f'<button style="background:#1B5566;color:#fff;border:none;border-radius:8px;'
+            f'padding:9px 22px;font-weight:700;cursor:pointer;font-size:0.93rem;">'
+            f'📨 Open draft for {custom_addr}</button></a>',
+            unsafe_allow_html=True,
         )
-        st.caption("Attachment: full report (Analysis + Breakdown sheets)")
 
-        # Test send
-        st.markdown("##### Test send")
-        test_col1, test_col2 = st.columns([3, 1])
-        with test_col1:
-            test_addr = st.text_input("Test email address", placeholder="you@example.com",
-                                      label_visibility="collapsed")
-        with test_col2:
-            if st.button("Send test", use_container_width=True) and test_addr:
-                try:
-                    _send_email(
-                        to_addrs=[test_addr], cc_addrs=[],
-                        subject=f"[TEST] {email_subject}",
-                        body=f"This is a test message.\n\n{email_body}",
-                        attachment=excel_bytes,
-                        attachment_name=f"report_{timestamp}.xlsx",
-                    )
-                    st.success(f"Test email sent to {test_addr}.")
-                except Exception as exc:
-                    st.error(f"Failed: {exc}")
+    st.divider()
 
-        st.divider()
-
-        # Final send
-        st.markdown("##### Send to Steuerbüro")
-        if st.button(
-            f"📨  Send to {_FIXED_TO}",
-            type="primary",
-            use_container_width=False,
-        ):
-            try:
-                _send_email(
-                    to_addrs=[_FIXED_TO], cc_addrs=_FIXED_CC,
-                    subject=email_subject,
-                    body=email_body,
-                    attachment=excel_bytes,
-                    attachment_name=f"report_{timestamp}.xlsx",
-                )
-                st.success(
-                    f"Report sent to {_FIXED_TO} "
-                    f"(CC: {', '.join(_FIXED_CC)})."
-                )
-            except Exception as exc:
-                st.error(f"Failed: {exc}")
+    # ── Fixed recipients ──────────────────────────────────────────────────────
+    st.markdown(
+        f"**Send to Steuerbüro**  \n"
+        f"To: `{_FIXED_TO}`  •  CC: `{', '.join(_FIXED_CC)}`"
+    )
+    fixed_link = _mailto_link(
+        to=_FIXED_TO, cc=_FIXED_CC,
+        subject=email_subject,
+        body=email_body,
+    )
+    st.markdown(
+        f'<a href="{fixed_link}" target="_blank">'
+        f'<button style="background:#E8622A;color:#fff;border:none;border-radius:8px;'
+        f'padding:9px 22px;font-weight:700;cursor:pointer;font-size:0.93rem;">'
+        f'📨 Open Outlook draft for Steuerbüro</button></a>',
+        unsafe_allow_html=True,
+    )
