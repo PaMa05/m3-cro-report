@@ -54,11 +54,18 @@ HOLIDAY_OPTIONS = {
 }
 
 # ── Seite einrichten ──────────────────────────────────────────────────────────
-icon_path = Path(__file__).parent / "assets" / "icon.png"
+icon_path    = Path(__file__).parent / "assets" / "icon.png"
+favicon_path = Path(__file__).parent / "assets" / "favicon.png"
+
+_page_icon = (
+    str(favicon_path) if favicon_path.exists()
+    else str(icon_path) if icon_path.exists()
+    else "⏱️"
+)
 
 st.set_page_config(
     page_title="CRO Report",
-    page_icon=str(icon_path) if icon_path.exists() else "⏱️",
+    page_icon=_page_icon,
     layout="wide",
     initial_sidebar_state="collapsed",
 )
