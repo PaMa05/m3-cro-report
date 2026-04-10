@@ -385,17 +385,34 @@ mehrarbeit = (gesamt - df[SOLL_COL]).round(2)   # per-employee soll
 meh_reise  = mehrarbeit.combine(df[SUM_REISE], min).round(2)
 meh_arbeit = (mehrarbeit - meh_reise).round(2)
 
-df_analyse = pd.DataFrame({
+nights_sh = (df[REISEZEIT_CATS[0]] + df[ARBEITSZEIT_CATS[0]]).round(2)
+nights    = (df[REISEZEIT_CATS[1]] + df[ARBEITSZEIT_CATS[1]]).round(2)
+sun_hol   = (df[REISEZEIT_CATS[2]] + df[ARBEITSZEIT_CATS[2]]).round(2)
+
+_analyse_data: dict = {
     "Employee":                    df["Employee"],
     "Travel + Working time":       gesamt,
     "Target hours":                df[SOLL_COL],
     "Overtime total":              mehrarbeit,
     "Overtime travel (110%)":      meh_reise,
     "Overtime work (110%)":        meh_arbeit,
-    "Nights & Sun/holidays (75%)": (df[REISEZEIT_CATS[0]] + df[ARBEITSZEIT_CATS[0]]).round(2),
-    "Nights (25%)":                (df[REISEZEIT_CATS[1]] + df[ARBEITSZEIT_CATS[1]]).round(2),
-    "Sun/holidays (50%)":          (df[REISEZEIT_CATS[2]] + df[ARBEITSZEIT_CATS[2]]).round(2),
-})
+    "Nights & Sun/holidays (75%)": nights_sh,
+    "Nights (25%)":                nights,
+    "Sun/holidays (50%)":          sun_hol,
+}
+
+if _has_pay:
+    gross   = df["Gross salary (€)"]
+    hourly  = df["Hourly rate (€)"]
+    total_gross = (
+        gross
+        + (meh_reise * 1.1 + meh_arbeit * 1.1
+           + nights_sh * 0.75 + nights * 0.25 + sun_hol * 0.5)
+        * hourly
+    ).round(2)
+    _analyse_data["Total gross pay (€)"] = total_gross
+
+df_analyse = pd.DataFrame(_analyse_data)
 
 # ── Tabs ─────────────────────────────────────────────────────────────────────
 tab1, tab2 = st.tabs(["📊 Analysis", "📋 Breakdown"])
@@ -437,6 +454,11 @@ with tab2:
             label=col,
             format="%.2f h",
             help="Positive = overtime, Negative = undertime",
+        )
+    if _has_pay and "Total gross pay (€)" in df_analyse.columns:
+        analyse_col_config["Total gross pay (€)"] = st.column_config.NumberColumn(
+            label="Total gross pay (€)", format="%.2f €",
+            help="Gross salary + premium hours × hourly rate",
         )
     st.dataframe(
         df_analyse,
@@ -527,10 +549,23 @@ def _mailto_link(to: str, cc: list[str], subject: str, body: str) -> str:
     )
     return f"mailto:{urllib.parse.quote(to)}?{params}"
 
+def _outlook_web_link(to: str, cc: list[str], subject: str, body: str) -> str:
+    """Outlook Web compose URL — always opens Outlook in the browser (Office 365)."""
+    params = urllib.parse.urlencode(
+        {
+            "to":      to,
+            "cc":      ",".join(cc),
+            "subject": subject,
+            "body":    body,
+        },
+        quote_via=urllib.parse.quote,
+    )
+    return f"https://outlook.office.com/mail/deeplink/compose?{params}"
+
 with st.expander("📧  Open in Outlook / Mail", expanded=False):
     st.caption(
-        "Clicking the button opens your default mail client (Outlook) with "
-        "recipients, subject and body pre-filled. "
+        "The **Outlook** button always opens Outlook 365 in the browser (recommended). "
+        "The **Mail app** button opens your local default mail client. "
         "Please attach the downloaded Excel file manually before sending."
     )
 
@@ -541,16 +576,17 @@ with st.expander("📧  Open in Outlook / Mail", expanded=False):
         label_visibility="collapsed", key="custom_email_addr",
     )
     if custom_addr:
-        custom_link = _mailto_link(
-            to=custom_addr, cc=[],
-            subject=f"[TEST] {email_subject}",
-            body=email_body,
-        )
+        ow_custom   = _outlook_web_link(custom_addr, [], f"[TEST] {email_subject}", email_body)
+        ml_custom   = _mailto_link(custom_addr, [], f"[TEST] {email_subject}", email_body)
         st.markdown(
-            f'<a href="{custom_link}" target="_blank">'
+            f'<a href="{ow_custom}" target="_blank">'
+            f'<button style="background:#0078D4;color:#fff;border:none;border-radius:8px;'
+            f'padding:9px 22px;font-weight:700;cursor:pointer;font-size:0.93rem;margin-right:8px;">'
+            f'📨 Outlook (test)</button></a>'
+            f'<a href="{ml_custom}" target="_blank">'
             f'<button style="background:#1B5566;color:#fff;border:none;border-radius:8px;'
             f'padding:9px 22px;font-weight:700;cursor:pointer;font-size:0.93rem;">'
-            f'📨 Open draft for {custom_addr}</button></a>',
+            f'✉️ Mail app (test)</button></a>',
             unsafe_allow_html=True,
         )
 
@@ -561,15 +597,16 @@ with st.expander("📧  Open in Outlook / Mail", expanded=False):
         f"**Send to Tax office**  \n"
         f"To: `{_FIXED_TO}`  •  CC: `{', '.join(_FIXED_CC)}`"
     )
-    fixed_link = _mailto_link(
-        to=_FIXED_TO, cc=_FIXED_CC,
-        subject=email_subject,
-        body=email_body,
-    )
+    ow_fixed = _outlook_web_link(_FIXED_TO, _FIXED_CC, email_subject, email_body)
+    ml_fixed = _mailto_link(_FIXED_TO, _FIXED_CC, email_subject, email_body)
     st.markdown(
-        f'<a href="{fixed_link}" target="_blank">'
+        f'<a href="{ow_fixed}" target="_blank">'
+        f'<button style="background:#0078D4;color:#fff;border:none;border-radius:8px;'
+        f'padding:9px 22px;font-weight:700;cursor:pointer;font-size:0.93rem;margin-right:8px;">'
+        f'📨 Outlook</button></a>'
+        f'<a href="{ml_fixed}" target="_blank">'
         f'<button style="background:#E8622A;color:#fff;border:none;border-radius:8px;'
         f'padding:9px 22px;font-weight:700;cursor:pointer;font-size:0.93rem;">'
-        f'📨 Open Outlook draft for Tax office</button></a>',
+        f'✉️ Mail app</button></a>',
         unsafe_allow_html=True,
     )
