@@ -243,18 +243,17 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float = 
     GREEN      = "375623"   # dunkelgrün Header
     GREEN_LIGHT = "E2EFDA"  # hellgrün alternierend
     ORANGE     = "FCE4D6"   # orange für Mehrarbeit-Spalten
+    TEAL       = "D6EEF2"   # helles Blau-Grün für Total gross pay
 
     ws = wb.create_sheet("Breakdown")
 
-    # Englische Spaltennamen (müssen mit app.py übereinstimmen)
-    COL_REISE_NIGHT_SH  = "Travel: nights & Sun/holidays"
-    COL_REISE_NIGHT     = "Travel: nights"
-    COL_REISE_SH        = "Travel: Sun/holidays"
-    COL_ARBEIT_NIGHT_SH = "Work: nights & Sun/holidays"
-    COL_ARBEIT_NIGHT    = "Work: nights"
-    COL_ARBEIT_SH       = "Work: Sun/holidays"
-    COL_SUM_REISE       = "Total travel time"
-    COL_SUM_ARBEIT      = "Total working time"
+    # Determine Analysis-sheet column letters for pay columns
+    # (Analysis has title row 1, header row 2 → data from row 3;
+    #  df column index 0 → column A, etc.)
+    _col_map = {name: get_column_letter(i + 1) for i, name in enumerate(df.columns)}
+    _gross_letter  = _col_map.get("Gross salary (€)")   # e.g. "N"
+    _hourly_letter = _col_map.get("Hourly rate (€)")    # e.g. "O"
+    _has_pay_cols  = bool(_gross_letter and _hourly_letter)
 
     headers = [
         "Employee",
@@ -270,6 +269,8 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float = 
         "Days of sick leave",
         "Notes",
     ]
+    if _has_pay_cols:
+        headers.append("Total gross pay (€)")
 
     MANUAL_COLS = {"Days of paid leave", "Days of sick leave", "Notes"}
 
@@ -331,28 +332,50 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float = 
             None,             # L – Notes (manuell)
         ]
 
+        if _has_pay_cols:
+            # Total gross pay = Gross salary
+            #   + (OT travel×1.1 + OT work×1.1 + Nights&Sun×0.75 + Nights×0.25 + Sun×0.5)
+            #   × Hourly rate
+            f_total_gross = (
+                f"=Analysis!{_gross_letter}{aw_row}"
+                f"+((E{r_idx}*1.1)+(F{r_idx}*1.1)+(G{r_idx}*0.75)"
+                f"+(H{r_idx}*0.25)+(I{r_idx}*0.5))"
+                f"*Analysis!{_hourly_letter}{aw_row}"
+            )
+            values.append(f_total_gross)   # M – Total gross pay
+
+        teal_fill = PatternFill("solid", fgColor=TEAL)
+        eur_fmt   = '#,##0.00" €"'
+
         for c_idx, val in enumerate(values, start=1):
             cell = ws.cell(row=r_idx, column=c_idx, value=val)
             cell.border = thin_bdr
+            h = headers[c_idx - 1]
 
-            if c_idx == 1:  # Employee
+            if h == "Employee":
                 cell.font      = Font(bold=True, size=10)
                 cell.alignment = Alignment(vertical="center")
                 if use_alt:
                     cell.fill = alt_fill
 
-            elif headers[c_idx - 1] in MANUAL_COLS:
+            elif h in MANUAL_COLS:
                 cell.alignment = Alignment(horizontal="left", vertical="center")
                 cell.font      = Font(size=10)
                 if use_alt:
                     cell.fill = alt_fill
 
-            elif headers[c_idx - 1] in ("Overtime total", "Overtime travel (110%)", "Overtime work (110%)"):
+            elif h in ("Overtime total", "Overtime travel (110%)", "Overtime work (110%)"):
                 cell.fill          = ora_fill
                 cell.number_format = num_fmt
                 cell.alignment     = Alignment(horizontal="right", vertical="center")
                 is_neg = isinstance(val, (int, float)) and val < 0
                 cell.font = Font(bold=True, size=10, color=(RED_FONT if is_neg else "000000"))
+
+            elif h == "Total gross pay (€)":
+                cell.fill          = teal_fill
+                cell.number_format = eur_fmt
+                cell.alignment     = Alignment(horizontal="right", vertical="center")
+                cell.font          = Font(bold=True, size=10)
 
             else:
                 cell.number_format = num_fmt
@@ -368,6 +391,8 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float = 
             ws.column_dimensions[get_column_letter(c_idx)].width = 30
         elif h in ("Days of paid leave", "Days of sick leave"):
             ws.column_dimensions[get_column_letter(c_idx)].width = 18
+        elif h == "Total gross pay (€)":
+            ws.column_dimensions[get_column_letter(c_idx)].width = 22
         else:
             ws.column_dimensions[get_column_letter(c_idx)].width = 20
 
