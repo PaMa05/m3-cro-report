@@ -508,7 +508,8 @@ df_analyse_json = df_analyse.to_json(orient="split")
 excel_bytes     = make_excel(df_json, meta_for_cache, holiday_label)
 excel_tax_bytes = make_excel_breakdown(df_analyse_json, meta_for_cache, holiday_label)
 
-timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+from zoneinfo import ZoneInfo
+timestamp = datetime.now(ZoneInfo("Europe/Berlin")).strftime("%Y-%m-%d_%H%M")
 
 dl_col1, dl_col2, _ = st.columns([2, 2, 3])
 
