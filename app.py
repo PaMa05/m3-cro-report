@@ -337,7 +337,7 @@ for emp in employees:
     eff_arb  = d.get("__eff_arb__")
     emp_soll = round(eff_arb, 2) if eff_arb else round(soll, 2)
     row[SOLL_COL]  = emp_soll
-    row[UEBER_COL] = round(row[SUM_ARBEIT] - emp_soll, 2)
+    row[UEBER_COL] = round((row[SUM_REISE] + row[SUM_ARBEIT]) - emp_soll, 2)
 
     # Optional pay columns (Analysis tab only)
     gross_salary = d.get("__gross_salary__")
@@ -426,7 +426,7 @@ with tab1:
     column_config[UEBER_COL] = st.column_config.NumberColumn(
         label=UEBER_COL,
         format="%.2f h",
-        help="Total working time − Target hours",
+        help="Target hours − (Travel + Working time)",
     )
     if _has_pay:
         column_config["Gross salary (€)"] = st.column_config.NumberColumn(

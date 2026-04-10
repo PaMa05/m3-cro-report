@@ -105,7 +105,7 @@ def _fill_breakdown_standalone_sheet(
     d_to:   date | None = meta.get("date_to")
 
     # Title row
-    all_headers = list(df_analyse.columns) + ["Days of paid leave", "Days of sick leave", "Notes"]
+    all_headers = list(df_analyse.columns)
     n_cols = len(all_headers)
 
     period_str = (
@@ -138,7 +138,6 @@ def _fill_breakdown_standalone_sheet(
     eur4_fmt  = '#,##0.0000" €"'
 
     OVERTIME_COLS = {"Overtime total", "Overtime travel (110%)", "Overtime work (110%)"}
-    MANUAL_COLS   = {"Days of paid leave", "Days of sick leave", "Notes"}
     PAY_COLS      = {"Gross salary (€)", "Hourly rate (€)"}
 
     for r_idx, (_, row) in enumerate(df_analyse.iterrows(), start=3):
@@ -151,10 +150,6 @@ def _fill_breakdown_standalone_sheet(
             if h == "Employee":
                 cell.font = Font(bold=True, size=10)
                 cell.alignment = Alignment(vertical="center")
-                if use_alt: cell.fill = alt_fill
-            elif h in MANUAL_COLS:
-                cell.font = Font(size=10)
-                cell.alignment = Alignment(horizontal="left", vertical="center")
                 if use_alt: cell.fill = alt_fill
             elif h in OVERTIME_COLS:
                 cell.fill          = ora_fill
@@ -182,12 +177,7 @@ def _fill_breakdown_standalone_sheet(
     # Column widths
     ws.column_dimensions["A"].width = 24
     for c_idx, h in enumerate(all_headers[1:], start=2):
-        if h == "Notes":
-            ws.column_dimensions[get_column_letter(c_idx)].width = 30
-        elif h in ("Days of paid leave", "Days of sick leave"):
-            ws.column_dimensions[get_column_letter(c_idx)].width = 18
-        else:
-            ws.column_dimensions[get_column_letter(c_idx)].width = 20
+        ws.column_dimensions[get_column_letter(c_idx)].width = 22 if h == "Total gross pay (€)" else 20
 
     ws.freeze_panes = "B3"
     ws.auto_filter.ref = f"A2:{get_column_letter(n_cols)}2"
@@ -265,14 +255,9 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float = 
         "Nights & Sun/holidays (75%)",
         "Nights (25%)",
         "Sun/holidays (50%)",
-        "Days of paid leave",
-        "Days of sick leave",
-        "Notes",
     ]
     if _has_pay_cols:
         headers.append("Total gross pay (€)")
-
-    MANUAL_COLS = {"Days of paid leave", "Days of sick leave", "Notes"}
 
     # Styling
     hdr_fill  = PatternFill("solid", fgColor=GREEN)
@@ -318,7 +303,7 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float = 
         emp_soll = row["Target hours"] if "Target hours" in df.columns else soll
 
         values = [
-            row["Employee"],  # A – Wert, kein Formel nötig
+            row["Employee"],  # A
             f_gesamt,         # B
             emp_soll,         # C – per-employee target hours
             f_mehrarbeit,     # D
@@ -327,9 +312,6 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float = 
             f_night_sh,       # G
             f_night,          # H
             f_sun_hol,        # I
-            None,             # J – Days of paid leave (manuell)
-            None,             # K – Days of sick leave (manuell)
-            None,             # L – Notes (manuell)
         ]
 
         if _has_pay_cols:
@@ -358,12 +340,6 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float = 
                 if use_alt:
                     cell.fill = alt_fill
 
-            elif h in MANUAL_COLS:
-                cell.alignment = Alignment(horizontal="left", vertical="center")
-                cell.font      = Font(size=10)
-                if use_alt:
-                    cell.fill = alt_fill
-
             elif h in ("Overtime total", "Overtime travel (110%)", "Overtime work (110%)"):
                 cell.fill          = ora_fill
                 cell.number_format = num_fmt
@@ -387,11 +363,7 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float = 
     # Spaltenbreiten
     ws.column_dimensions["A"].width = 24
     for c_idx, h in enumerate(headers[1:], start=2):
-        if h == "Notes":
-            ws.column_dimensions[get_column_letter(c_idx)].width = 30
-        elif h in ("Days of paid leave", "Days of sick leave"):
-            ws.column_dimensions[get_column_letter(c_idx)].width = 18
-        elif h == "Total gross pay (€)":
+        if h == "Total gross pay (€)":
             ws.column_dimensions[get_column_letter(c_idx)].width = 22
         else:
             ws.column_dimensions[get_column_letter(c_idx)].width = 20
