@@ -165,9 +165,11 @@ def _calc_soll_hours(d0: date, d1: date, holiday_set: set[date]) -> float:
 
 def _read_extra_cols(path: Path) -> tuple[dict, list[str]]:
     """
-    Reads the LAST column of the input Excel as 'Bruttolohn' per employee.
+    Reads two optional columns from the input Excel:
+      - 'Effektive Arbeitsstunden' (by name)  → per-employee target hours
+      - last column                            → Gross salary per employee
     Returns:
-      extra  – dict  employee → {"bruttolohn": float}
+      extra  – dict  employee → {"eff_arb": float, "gross_salary": float}
       warns  – list of warning strings for inconsistent values per employee
     """
     import pandas as pd
@@ -183,25 +185,37 @@ def _read_extra_cols(path: Path) -> tuple[dict, list[str]]:
         + df["Nachname (bürgerlich)"].astype(str).str.strip()
     )
 
-    last_col = df.columns[-1]
-    brutto_vals = pd.to_numeric(df[last_col], errors="coerce")
-
     extra: dict[str, dict] = {}
     warns: list[str] = []
 
-    tmp = pd.DataFrame({"emp": emp_series, "val": brutto_vals}).dropna(subset=["val"])
-    if tmp.empty:
-        return {}, []
+    # ── Effektive Arbeitsstunden (target hours per employee) ──────────────────
+    if "Effektive Arbeitsstunden" in df.columns:
+        eff_vals = pd.to_numeric(df["Effektive Arbeitsstunden"], errors="coerce")
+        tmp = pd.DataFrame({"emp": emp_series, "val": eff_vals}).dropna(subset=["val"])
+        for emp, grp in tmp.groupby("emp"):
+            unique_vals = grp["val"].unique()
+            if len(unique_vals) > 1:
+                warns.append(
+                    f"⚠️ 'Effektive Arbeitsstunden' has multiple values for **{emp}** "
+                    f"({', '.join(str(round(v, 2)) for v in sorted(unique_vals))}) — "
+                    f"using the highest value."
+                )
+            extra.setdefault(str(emp), {})["eff_arb"] = float(grp["val"].max())
 
-    for emp, grp in tmp.groupby("emp"):
-        unique_vals = grp["val"].unique()
-        if len(unique_vals) > 1:
-            warns.append(
-                f"⚠️ Bruttolohn (column '{last_col}') has multiple values for **{emp}** "
-                f"({', '.join(str(round(v, 2)) for v in sorted(unique_vals))}) — "
-                f"using the lowest value."
-            )
-        extra[str(emp)] = {"bruttolohn": float(grp["val"].min())}
+    # ── Gross salary (last column of input) ───────────────────────────────────
+    last_col = df.columns[-1]
+    brutto_vals = pd.to_numeric(df[last_col], errors="coerce")
+    tmp = pd.DataFrame({"emp": emp_series, "val": brutto_vals}).dropna(subset=["val"])
+    if not tmp.empty:
+        for emp, grp in tmp.groupby("emp"):
+            unique_vals = grp["val"].unique()
+            if len(unique_vals) > 1:
+                warns.append(
+                    f"⚠️ Gross salary (column '{last_col}') has multiple values for **{emp}** "
+                    f"({', '.join(str(round(v, 2)) for v in sorted(unique_vals))}) — "
+                    f"using the lowest value."
+                )
+            extra.setdefault(str(emp), {})["gross_salary"] = float(grp["val"].min())
 
     return extra, warns
 
@@ -290,13 +304,18 @@ def evaluate_excel(path: Path, holiday_mode: str = "DE-NW"):
     warnings_list: list[str] = extra_warns
 
     for emp in out:
-        bruttolohn = extra.get(emp, {}).get("bruttolohn")
-        out[emp]["__bruttolohn__"] = bruttolohn   # float or None
-        # Stundenlohn = Bruttolohn / potential working hours in the period
-        if bruttolohn is not None and soll > 0:
-            out[emp]["__stundenlohn__"] = round(bruttolohn / soll, 4)
+        ed = extra.get(emp, {})
+        eff_arb     = ed.get("eff_arb")       # from "Effektive Arbeitsstunden" column
+        gross_salary = ed.get("gross_salary")  # from last column
+
+        out[emp]["__eff_arb__"]     = eff_arb      # float or None
+        out[emp]["__gross_salary__"] = gross_salary  # float or None
+
+        # Hourly rate = Gross salary / potential working hours (workdays × 8)
+        if gross_salary is not None and soll > 0:
+            out[emp]["__hourly_rate__"] = round(gross_salary / soll, 4)
         else:
-            out[emp]["__stundenlohn__"] = None
+            out[emp]["__hourly_rate__"] = None
 
     meta = {
         "date_from": min_dt.date(),

@@ -333,23 +333,26 @@ for emp in employees:
         row[en] = round(d.get(de, 0.0), 2)
     row[SUM_ARBEIT] = round(sum(d.get(de, 0.0) for de in _ARBEITSZEIT_DE), 2)
 
-    row[SOLL_COL]  = round(soll, 2)
-    row[UEBER_COL] = round(row[SUM_ARBEIT] - soll, 2)
+    # Per-employee target hours from "Effektive Arbeitsstunden"; fall back to calculated soll
+    eff_arb  = d.get("__eff_arb__")
+    emp_soll = round(eff_arb, 2) if eff_arb else round(soll, 2)
+    row[SOLL_COL]  = emp_soll
+    row[UEBER_COL] = round(row[SUM_ARBEIT] - emp_soll, 2)
 
-    # Optional pay columns
-    bruttolohn  = d.get("__bruttolohn__")
-    stundenlohn = d.get("__stundenlohn__")
-    row["Bruttolohn (€)"]  = round(bruttolohn,  2) if bruttolohn  is not None else None
-    row["Stundenlohn (€)"] = round(stundenlohn, 4) if stundenlohn is not None else None
+    # Optional pay columns (Analysis tab only)
+    gross_salary = d.get("__gross_salary__")
+    hourly_rate  = d.get("__hourly_rate__")
+    row["Gross salary (€)"] = round(gross_salary, 2) if gross_salary is not None else None
+    row["Hourly rate (€)"]  = round(hourly_rate,  4) if hourly_rate  is not None else None
 
     rows.append(row)
 
 df = pd.DataFrame(rows)
 
 # Detect whether pay columns have any data (drop them if all None)
-_has_pay = df["Bruttolohn (€)"].notna().any()
+_has_pay = df["Gross salary (€)"].notna().any()
 if not _has_pay:
-    df = df.drop(columns=["Bruttolohn (€)", "Stundenlohn (€)"])
+    df = df.drop(columns=["Gross salary (€)", "Hourly rate (€)"])
 
 # ── Kennzahlen-Zeile ──────────────────────────────────────────────────────────
 d_from = meta.get("date_from")
@@ -382,7 +385,7 @@ mehrarbeit = (gesamt - df[SOLL_COL]).round(2)   # per-employee soll
 meh_reise  = mehrarbeit.combine(df[SUM_REISE], min).round(2)
 meh_arbeit = (mehrarbeit - meh_reise).round(2)
 
-_analyse_data: dict = {
+df_analyse = pd.DataFrame({
     "Employee":                    df["Employee"],
     "Travel + Working time":       gesamt,
     "Target hours":                df[SOLL_COL],
@@ -392,12 +395,7 @@ _analyse_data: dict = {
     "Nights & Sun/holidays (75%)": (df[REISEZEIT_CATS[0]] + df[ARBEITSZEIT_CATS[0]]).round(2),
     "Nights (25%)":                (df[REISEZEIT_CATS[1]] + df[ARBEITSZEIT_CATS[1]]).round(2),
     "Sun/holidays (50%)":          (df[REISEZEIT_CATS[2]] + df[ARBEITSZEIT_CATS[2]]).round(2),
-}
-if _has_pay:
-    _analyse_data["Bruttolohn (€)"]  = df["Bruttolohn (€)"]
-    _analyse_data["Stundenlohn (€)"] = df["Stundenlohn (€)"]
-
-df_analyse = pd.DataFrame(_analyse_data)
+})
 
 # ── Tabs ─────────────────────────────────────────────────────────────────────
 tab1, tab2 = st.tabs(["📊 Analysis", "📋 Breakdown"])
@@ -414,11 +412,11 @@ with tab1:
         help="Total working time − Target hours",
     )
     if _has_pay:
-        column_config["Bruttolohn (€)"]  = st.column_config.NumberColumn(
-            label="Bruttolohn (€)", format="%.2f €"
+        column_config["Gross salary (€)"] = st.column_config.NumberColumn(
+            label="Gross salary (€)", format="%.2f €"
         )
-        column_config["Stundenlohn (€)"] = st.column_config.NumberColumn(
-            label="Stundenlohn (€)", format="%.4f €"
+        column_config["Hourly rate (€)"] = st.column_config.NumberColumn(
+            label="Hourly rate (€)", format="%.4f €"
         )
     st.dataframe(
         df,
@@ -439,13 +437,6 @@ with tab2:
             label=col,
             format="%.2f h",
             help="Positive = overtime, Negative = undertime",
-        )
-    if _has_pay:
-        analyse_col_config["Bruttolohn (€)"]  = st.column_config.NumberColumn(
-            label="Bruttolohn (€)", format="%.2f €"
-        )
-        analyse_col_config["Stundenlohn (€)"] = st.column_config.NumberColumn(
-            label="Stundenlohn (€)", format="%.4f €"
         )
     st.dataframe(
         df_analyse,
@@ -503,7 +494,7 @@ with dl_col1:
 
 with dl_col2:
     st.download_button(
-        label="⬇️  Download Breakdown (Steuerbüro)",
+        label="⬇️  Download Breakdown (Tax office)",
         data=excel_tax_bytes,
         file_name=f"breakdown_{timestamp}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -567,7 +558,7 @@ with st.expander("📧  Open in Outlook / Mail", expanded=False):
 
     # ── Fixed recipients ──────────────────────────────────────────────────────
     st.markdown(
-        f"**Send to Steuerbüro**  \n"
+        f"**Send to Tax office**  \n"
         f"To: `{_FIXED_TO}`  •  CC: `{', '.join(_FIXED_CC)}`"
     )
     fixed_link = _mailto_link(
@@ -579,6 +570,6 @@ with st.expander("📧  Open in Outlook / Mail", expanded=False):
         f'<a href="{fixed_link}" target="_blank">'
         f'<button style="background:#E8622A;color:#fff;border:none;border-radius:8px;'
         f'padding:9px 22px;font-weight:700;cursor:pointer;font-size:0.93rem;">'
-        f'📨 Open Outlook draft for Steuerbüro</button></a>',
+        f'📨 Open Outlook draft for Tax office</button></a>',
         unsafe_allow_html=True,
     )

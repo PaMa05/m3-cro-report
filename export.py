@@ -139,7 +139,7 @@ def _fill_breakdown_standalone_sheet(
 
     OVERTIME_COLS = {"Overtime total", "Overtime travel (110%)", "Overtime work (110%)"}
     MANUAL_COLS   = {"Days of paid leave", "Days of sick leave", "Notes"}
-    PAY_COLS      = {"Bruttolohn (€)", "Stundenlohn (€)"}
+    PAY_COLS      = {"Gross salary (€)", "Hourly rate (€)"}
 
     for r_idx, (_, row) in enumerate(df_analyse.iterrows(), start=3):
         use_alt = (r_idx % 2 == 0)
@@ -163,7 +163,7 @@ def _fill_breakdown_standalone_sheet(
                 is_neg = isinstance(val, (int, float)) and val < 0
                 cell.font = Font(bold=True, size=10,
                                  color=(RED_FONT if is_neg else "000000"))
-            elif h == "Stundenlohn (€)":
+            elif h == "Hourly rate (€)":
                 cell.number_format = eur4_fmt
                 cell.alignment     = Alignment(horizontal="right", vertical="center")
                 cell.font          = Font(size=10)
@@ -234,7 +234,7 @@ def build_excel_bytes(
     return buf.read()
 
 
-def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float) -> None:
+def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float = 0.0) -> None:
     """
     Zweites Sheet 'Analyse' mit aggregierten Werten:
     Gesamtstunden, Mehrarbeit (aufgeteilt in Reise/Arbeit),
@@ -313,10 +313,13 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float) -
         f_night       = f"=Analysis!H{aw_row}+Analysis!C{aw_row}"
         f_sun_hol     = f"=Analysis!I{aw_row}+Analysis!D{aw_row}"
 
+        # Per-employee target hours (from "Effektive Arbeitsstunden" if present, else global soll)
+        emp_soll = row["Target hours"] if "Target hours" in df.columns else soll
+
         values = [
             row["Employee"],  # A – Wert, kein Formel nötig
             f_gesamt,         # B
-            soll,             # C – fixer Wert (Werktage × 8h)
+            emp_soll,         # C – per-employee target hours
             f_mehrarbeit,     # D
             f_meh_reise,      # E
             f_meh_arbeit,     # F
