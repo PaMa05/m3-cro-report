@@ -85,15 +85,11 @@ def _fill_analysis_sheet(
     ws.row_dimensions[2].height = 46
 
     # ── Data rows ──────────────────────────────────────────────────────────────
-    alt_fill  = PatternFill("solid", fgColor=PT_ALT)
-    sum_fill  = PatternFill("solid", fgColor=PT_SUM)
-    pay_fill  = PatternFill("solid", fgColor=PT_PAY)
-    thin_bdr  = _thin_border()
-    num_fmt   = '#,##0.00" h"'
-    eur_fmt   = '#,##0.00" €"'
-    eur4_fmt  = '#,##0.0000" €"'
-
-    PAY_COLS = {"Gross salary (€)", "Hourly rate (€)"}
+    alt_fill = PatternFill("solid", fgColor=PT_ALT)
+    thin_bdr = _thin_border()
+    num_fmt  = '#,##0.00" h"'
+    eur_fmt  = '#,##0.00" €"'
+    eur4_fmt = '#,##0.0000" €"'
 
     for r_idx, row_data in enumerate(df.itertuples(index=False), start=3):
         use_alt = (r_idx % 2 == 0)
@@ -101,39 +97,29 @@ def _fill_analysis_sheet(
         for c_idx, (col_name, val) in enumerate(zip(df.columns, row_data), start=1):
             cell = ws.cell(row=r_idx, column=c_idx, value=val)
             cell.border = thin_bdr
+            cell.fill   = alt_fill if use_alt else PatternFill()
+
+            is_neg = isinstance(val, (int, float)) and val < 0
 
             if col_name == "Employee":
                 cell.font      = Font(bold=True, size=10, color=PT_TITLE, name="Calibri")
                 cell.alignment = Alignment(vertical="center", indent=1)
-                cell.fill      = alt_fill if use_alt else PatternFill()
-
-            elif col_name in SUM_COLS:
-                cell.fill          = sum_fill
-                cell.number_format = num_fmt
-                cell.alignment     = Alignment(horizontal="right", vertical="center")
-                is_neg = isinstance(val, (int, float)) and val < 0
-                cell.font = Font(
-                    bold=True, size=10, name="Calibri",
-                    color=(RED_FONT if (col_name == "Overtime" and is_neg) else PT_TITLE),
-                )
-
             elif col_name == "Hourly rate (€)":
-                cell.fill          = pay_fill
                 cell.number_format = eur4_fmt
                 cell.alignment     = Alignment(horizontal="right", vertical="center")
-                cell.font          = Font(size=10, name="Calibri", italic=True)
-
-            elif col_name in PAY_COLS:
-                cell.fill          = pay_fill
+                cell.font          = Font(size=10, name="Calibri")
+            elif col_name in {"Gross salary (€)"}:
                 cell.number_format = eur_fmt
                 cell.alignment     = Alignment(horizontal="right", vertical="center")
-                cell.font          = Font(size=10, name="Calibri", italic=True)
-
+                cell.font          = Font(size=10, name="Calibri")
+            elif col_name == "Overtime" and is_neg:
+                cell.number_format = num_fmt
+                cell.alignment     = Alignment(horizontal="right", vertical="center")
+                cell.font          = Font(size=10, name="Calibri", color=RED_FONT)
             else:
                 cell.number_format = num_fmt
                 cell.alignment     = Alignment(horizontal="right", vertical="center")
                 cell.font          = Font(size=10, name="Calibri")
-                cell.fill          = alt_fill if use_alt else PatternFill()
 
     # ── Column widths ──────────────────────────────────────────────────────────
     for c_idx, col_name in enumerate(df.columns, start=1):
@@ -194,12 +180,10 @@ def _breakdown_sheet_content(
     ws.row_dimensions[2].height = 46
 
     # ── Data rows ──────────────────────────────────────────────────────────────
-    alt_fill   = PatternFill("solid", fgColor=OR_ALT)
-    ot_fill    = PatternFill("solid", fgColor=OR_OT)
-    gross_fill = PatternFill("solid", fgColor=OR_GROSS)
-    thin_bdr   = _thin_border()
-    num_fmt    = '#,##0.00" h"'
-    eur_fmt    = '#,##0.00" €"'
+    alt_fill = PatternFill("solid", fgColor=OR_ALT)
+    thin_bdr = _thin_border()
+    num_fmt  = '#,##0.00" h"'
+    eur_fmt  = '#,##0.00" €"'
 
     OT_COLS = {"Overtime total", "Overtime travel (110%)", "Overtime work (110%)"}
 
@@ -209,34 +193,26 @@ def _breakdown_sheet_content(
         for c_idx, val in enumerate(values, start=1):
             cell = ws.cell(row=r_idx, column=c_idx, value=val)
             cell.border = thin_bdr
+            cell.fill   = alt_fill if use_alt else PatternFill()
             h = headers[c_idx - 1]
+
+            is_neg = isinstance(val, (int, float)) and val < 0
 
             if h == "Employee":
                 cell.font      = Font(bold=True, size=10, color=OR_TITLE, name="Calibri")
                 cell.alignment = Alignment(vertical="center", indent=1)
-                cell.fill      = alt_fill if use_alt else PatternFill()
-
-            elif h in OT_COLS:
-                cell.fill          = ot_fill
-                cell.number_format = num_fmt
-                cell.alignment     = Alignment(horizontal="right", vertical="center")
-                is_neg = isinstance(val, (int, float)) and val < 0
-                cell.font = Font(
-                    bold=True, size=10, name="Calibri",
-                    color=(RED_FONT if is_neg else OR_TITLE),
-                )
-
             elif h == "Total gross pay (€)":
-                cell.fill          = gross_fill
                 cell.number_format = eur_fmt
                 cell.alignment     = Alignment(horizontal="right", vertical="center")
-                cell.font          = Font(bold=True, size=10, color="FFFFFF", name="Calibri")
-
+                cell.font          = Font(bold=True, size=10, name="Calibri")
+            elif h in OT_COLS and is_neg:
+                cell.number_format = num_fmt
+                cell.alignment     = Alignment(horizontal="right", vertical="center")
+                cell.font          = Font(size=10, name="Calibri", color=RED_FONT)
             else:
                 cell.number_format = num_fmt
                 cell.alignment     = Alignment(horizontal="right", vertical="center")
                 cell.font          = Font(size=10, name="Calibri")
-                cell.fill          = alt_fill if use_alt else PatternFill()
 
     # ── Column widths ──────────────────────────────────────────────────────────
     ws.column_dimensions["A"].width = 26
