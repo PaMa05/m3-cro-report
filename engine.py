@@ -163,6 +163,56 @@ def _calc_soll_hours(d0: date, d1: date, holiday_set: set[date]) -> float:
     return float(workdays) * 8.0
 
 
+def _read_extra_cols(path: Path) -> tuple[dict, list[str]]:
+    """
+    Reads optional columns 'Effektive Arbeitsstunden' and 'Bruttolohn' from the
+    Excel file.  Returns:
+      extra  – dict  employee → {"eff_arb": float | None, "bruttolohn": float | None}
+      warns  – list of warning strings for inconsistent values per employee
+    """
+    import pandas as pd
+
+    df = pd.read_excel(path, engine="openpyxl")
+
+    # Build employee key (same logic as _parse_excel)
+    if "Vorname (bürgerlich)" not in df.columns or "Nachname (bürgerlich)" not in df.columns:
+        return {}, []
+
+    emp_series = (
+        df["Vorname (bürgerlich)"].astype(str).str.strip()
+        + " "
+        + df["Nachname (bürgerlich)"].astype(str).str.strip()
+    )
+
+    extra: dict[str, dict] = {}
+    warns: list[str] = []
+
+    for col_name, agg_fn, key in [
+        ("Effektive Arbeitsstunden", "max", "eff_arb"),
+        ("Bruttolohn",              "min", "bruttolohn"),
+    ]:
+        if col_name not in df.columns:
+            continue
+
+        tmp = pd.DataFrame({"emp": emp_series, "val": pd.to_numeric(df[col_name], errors="coerce")})
+        tmp = tmp.dropna(subset=["val"])
+        if tmp.empty:
+            continue
+
+        for emp, grp in tmp.groupby("emp"):
+            unique_vals = grp["val"].unique()
+            if len(unique_vals) > 1:
+                warns.append(
+                    f"⚠️ '{col_name}' has multiple values for {emp} "
+                    f"({', '.join(str(v) for v in sorted(unique_vals))}) — "
+                    f"using {'highest' if agg_fn == 'max' else 'lowest'} value."
+                )
+            chosen = float(grp["val"].max() if agg_fn == "max" else grp["val"].min())
+            extra.setdefault(str(emp), {})[key] = chosen
+
+    return extra, warns
+
+
 def evaluate_excel(path: Path, holiday_mode: str = "DE-NW"):
     segs = _parse_excel(path)
     if not segs:
@@ -239,10 +289,30 @@ def evaluate_excel(path: Path, holiday_mode: str = "DE-NW"):
         for cat in CATEGORIES:
             out[emp].setdefault(cat, 0.0)
 
+    # ── Extra columns (optional) ──────────────────────────────────────────────
+    extra, extra_warns = _read_extra_cols(path)
+
+    warnings_list: list[str] = extra_warns
+
+    for emp in out:
+        ed = extra.get(emp, {})
+        eff_arb   = ed.get("eff_arb")
+        bruttolohn = ed.get("bruttolohn")
+
+        out[emp]["__eff_arb__"]    = eff_arb    # float or None
+        out[emp]["__bruttolohn__"] = bruttolohn  # float or None
+        if eff_arb and eff_arb > 0 and bruttolohn is not None:
+            out[emp]["__stundenlohn__"] = round(bruttolohn / eff_arb, 4)
+        else:
+            out[emp]["__stundenlohn__"] = None
+
+    soll = _calc_soll_hours(min_dt.date(), max_dt.date(), holiday_set)
+
     meta = {
         "date_from": min_dt.date(),
         "date_to": max_dt.date(),
-        "soll_hours": _calc_soll_hours(min_dt.date(), max_dt.date(), holiday_set),
+        "soll_hours": soll,
     }
 
-    return out, None, meta
+    warning_text = "\n".join(warnings_list) if warnings_list else None
+    return out, warning_text, meta

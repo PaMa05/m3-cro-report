@@ -18,31 +18,22 @@ RED_FONT = "C00000"   # Rot für negative Überstunden
 SUM_COLS = {"Total travel time", "Total working time", "Target hours", "Overtime"}
 
 
-def build_excel_bytes(
+def _fill_analysis_sheet(
+    ws,
     df: pd.DataFrame,
     meta: dict[str, Any],
     holiday_label: str,
-) -> bytes:
-    """
-    Erstellt eine formatierte Excel-Datei aus dem Auswertungs-DataFrame
-    und gibt sie als Bytes zurück (für st.download_button).
-    """
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Breakdown"
-
+) -> None:
+    """Fills a worksheet with the 8-category Analysis data."""
     d_from: date | None = meta.get("date_from")
     d_to:   date | None = meta.get("date_to")
     soll: float         = meta.get("soll_hours", 0.0)
 
-    # ── Titelzeile ────────────────────────────────────────────────────────────
     title_parts = ["M3 Croatia Time & Travel Report"]
     if d_from and d_to:
-        title_parts.append(
-            f"{d_from.strftime('%d.%m.%Y')} – {d_to.strftime('%d.%m.%Y')}"
-        )
-    title_parts.append(f"Soll: {soll:.1f} h")
-    title_parts.append(f"Feiertage: {holiday_label}")
+        title_parts.append(f"{d_from.strftime('%d.%m.%Y')} – {d_to.strftime('%d.%m.%Y')}")
+    title_parts.append(f"Target: {soll:.1f} h")
+    title_parts.append(f"Holidays: {holiday_label}")
     title_text = "   |   ".join(title_parts)
 
     n_cols = len(df.columns)
@@ -53,77 +44,82 @@ def build_excel_bytes(
     tc.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 28
 
-    # ── Kopfzeile ─────────────────────────────────────────────────────────────
     hdr_fill  = PatternFill("solid", fgColor=M3_BLUE)
     hdr_font  = Font(bold=True, color="FFFFFF", size=10)
     hdr_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-
     for c_idx, col_name in enumerate(df.columns, start=1):
         cell = ws.cell(row=2, column=c_idx, value=col_name)
-        cell.font      = hdr_font
-        cell.fill      = hdr_fill
-        cell.alignment = hdr_align
+        cell.font = hdr_font; cell.fill = hdr_fill; cell.alignment = hdr_align
     ws.row_dimensions[2].height = 44
 
-    # ── Datenzeilen ───────────────────────────────────────────────────────────
     alt_fill  = PatternFill("solid", fgColor=M3_LIGHT)
     sum_fill  = PatternFill("solid", fgColor=GOLD)
     thin_side = Side(style="thin", color="CCCCCC")
-    thin_bdr  = Border(
-        bottom=thin_side,
-        right=Side(style="thin", color="E0E0E0"),
-    )
-    num_fmt = '#,##0.00" h"'
+    thin_bdr  = Border(bottom=thin_side, right=Side(style="thin", color="E0E0E0"))
+    num_fmt   = '#,##0.00" h"'
 
     for r_idx, row_data in enumerate(df.itertuples(index=False), start=3):
         use_alt = (r_idx % 2 == 0)
         for c_idx, (col_name, val) in enumerate(zip(df.columns, row_data), start=1):
             cell = ws.cell(row=r_idx, column=c_idx, value=val)
             cell.border = thin_bdr
-
             if col_name == "Employee":
-                cell.font      = Font(bold=True, size=10)
+                cell.font = Font(bold=True, size=10)
                 cell.alignment = Alignment(vertical="center")
-                if use_alt:
-                    cell.fill = alt_fill
-
+                if use_alt: cell.fill = alt_fill
             elif col_name in SUM_COLS:
-                cell.fill          = sum_fill
+                cell.fill = sum_fill
                 cell.number_format = num_fmt
-                cell.alignment     = Alignment(horizontal="right", vertical="center")
+                cell.alignment = Alignment(horizontal="right", vertical="center")
                 is_neg = isinstance(val, (int, float)) and val < 0
-                cell.font = Font(
-                    bold=True,
-                    size=10,
-                    color=(RED_FONT if (col_name == "Overtime" and is_neg) else "000000"),
-                )
-
+                cell.font = Font(bold=True, size=10,
+                    color=(RED_FONT if (col_name == "Overtime" and is_neg) else "000000"))
             else:
                 cell.number_format = num_fmt
-                cell.alignment     = Alignment(horizontal="right", vertical="center")
-                cell.font          = Font(size=10)
-                if use_alt:
-                    cell.fill = alt_fill
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+                cell.font = Font(size=10)
+                if use_alt: cell.fill = alt_fill
 
-    # ── Spaltenbreiten ────────────────────────────────────────────────────────
     for c_idx, col_name in enumerate(df.columns, start=1):
-        col_letter = get_column_letter(c_idx)
-        if col_name == "Employee":
-            ws.column_dimensions[col_letter].width = 24
-        else:
-            ws.column_dimensions[col_letter].width = 15
-
-    # ── Fixierte Kopfzeile ────────────────────────────────────────────────────
+        ws.column_dimensions[get_column_letter(c_idx)].width = 24 if col_name == "Employee" else 15
     ws.freeze_panes = "B3"
-
-    # ── Autofilter ────────────────────────────────────────────────────────────
     ws.auto_filter.ref = f"A2:{get_column_letter(n_cols)}2"
 
-    # ── Analysis-Sheet ────────────────────────────────────────────────────────
+
+def build_breakdown_only_bytes(
+    df: pd.DataFrame,
+    meta: dict[str, Any],
+    holiday_label: str,
+) -> bytes:
+    """Only the Analysis sheet (8 categories) — for tax office."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Analysis"
+    _fill_analysis_sheet(ws, df, meta, holiday_label)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.read()
+
+
+def build_excel_bytes(
+    df: pd.DataFrame,
+    meta: dict[str, Any],
+    holiday_label: str,
+) -> bytes:
+    """Full report: Analysis sheet + Breakdown sheet."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Analysis"
+    soll: float = meta.get("soll_hours", 0.0)
+
+    _fill_analysis_sheet(ws, df, meta, holiday_label)
+
+    # ── Breakdown-Sheet ───────────────────────────────────────────────────────
     _build_analyse_sheet(wb, df, soll)
 
     # Analysis-Sheet als aktives Blatt beim Öffnen setzen
-    wb.active = wb["Analysis"]
+    wb.active = wb["Breakdown"]
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -141,7 +137,7 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float) -
     GREEN_LIGHT = "E2EFDA"  # hellgrün alternierend
     ORANGE     = "FCE4D6"   # orange für Mehrarbeit-Spalten
 
-    ws = wb.create_sheet("Analysis")
+    ws = wb.create_sheet("Breakdown")
 
     # Englische Spaltennamen (müssen mit app.py übereinstimmen)
     COL_REISE_NIGHT_SH  = "Travel: nights & Sun/holidays"
@@ -158,11 +154,11 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float) -
         "Travel + Working time",
         "Target hours",
         "Overtime total",
-        "Overtime travel",
-        "Overtime work",
-        "Nights & Sun/holidays",
-        "Nights",
-        "Sun/holidays",
+        "Overtime travel (110%)",
+        "Overtime work (110%)",
+        "Nights & Sun/holidays (75%)",
+        "Nights (25%)",
+        "Sun/holidays (50%)",
         "Days of paid leave",
         "Days of sick leave",
         "Notes",
@@ -202,13 +198,13 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float) -
         aw_row    = r_idx + 1   # entsprechende Zeile im Auswertungs-Sheet
 
         # Formeln – Excel speichert intern englische Namen; Semikolon für IF→WENN
-        f_gesamt      = f"=Breakdown!F{aw_row}+Breakdown!K{aw_row}"
+        f_gesamt      = f"=Analysis!F{aw_row}+Analysis!K{aw_row}"
         f_mehrarbeit  = f"=B{r_idx}-C{r_idx}"
-        f_meh_reise   = f"=IF(D{r_idx}<=Breakdown!F{aw_row},D{r_idx},Breakdown!F{aw_row})"
+        f_meh_reise   = f"=IF(D{r_idx}<=Analysis!F{aw_row},D{r_idx},Analysis!F{aw_row})"
         f_meh_arbeit  = f"=D{r_idx}-E{r_idx}"
-        f_night_sh    = f"=Breakdown!G{aw_row}+Breakdown!B{aw_row}"
-        f_night       = f"=Breakdown!H{aw_row}+Breakdown!C{aw_row}"
-        f_sun_hol     = f"=Breakdown!I{aw_row}+Breakdown!D{aw_row}"
+        f_night_sh    = f"=Analysis!G{aw_row}+Analysis!B{aw_row}"
+        f_night       = f"=Analysis!H{aw_row}+Analysis!C{aw_row}"
+        f_sun_hol     = f"=Analysis!I{aw_row}+Analysis!D{aw_row}"
 
         values = [
             row["Employee"],  # A – Wert, kein Formel nötig
@@ -241,7 +237,7 @@ def _build_analyse_sheet(wb: openpyxl.Workbook, df: pd.DataFrame, soll: float) -
                 if use_alt:
                     cell.fill = alt_fill
 
-            elif headers[c_idx - 1] in ("Overtime total", "Overtime travel", "Overtime work"):
+            elif headers[c_idx - 1] in ("Overtime total", "Overtime travel (110%)", "Overtime work (110%)"):
                 cell.fill          = ora_fill
                 cell.number_format = num_fmt
                 cell.alignment     = Alignment(horizontal="right", vertical="center")

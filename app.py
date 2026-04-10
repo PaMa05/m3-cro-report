@@ -333,12 +333,26 @@ for emp in employees:
         row[en] = round(d.get(de, 0.0), 2)
     row[SUM_ARBEIT] = round(sum(d.get(de, 0.0) for de in _ARBEITSZEIT_DE), 2)
 
-    row[SOLL_COL]  = round(soll, 2)
-    row[UEBER_COL] = round(row[SUM_ARBEIT] - soll, 2)
+    # Use per-employee Effektive Arbeitsstunden if available, else fall back to period soll
+    eff_arb = d.get("__eff_arb__")
+    emp_soll = round(eff_arb, 2) if eff_arb else round(soll, 2)
+    row[SOLL_COL]  = emp_soll
+    row[UEBER_COL] = round(row[SUM_ARBEIT] - emp_soll, 2)
+
+    # Optional pay columns
+    bruttolohn  = d.get("__bruttolohn__")
+    stundenlohn = d.get("__stundenlohn__")
+    row["Bruttolohn (€)"]  = round(bruttolohn,  2) if bruttolohn  is not None else None
+    row["Stundenlohn (€)"] = round(stundenlohn, 4) if stundenlohn is not None else None
 
     rows.append(row)
 
 df = pd.DataFrame(rows)
+
+# Detect whether pay columns have any data (drop them if all None)
+_has_pay = df["Bruttolohn (€)"].notna().any()
+if not _has_pay:
+    df = df.drop(columns=["Bruttolohn (€)", "Stundenlohn (€)"])
 
 # ── Kennzahlen-Zeile ──────────────────────────────────────────────────────────
 d_from = meta.get("date_from")
@@ -367,24 +381,29 @@ st.divider()
 
 # ── Analyse-DataFrame aufbauen ────────────────────────────────────────────────
 gesamt     = (df[SUM_REISE] + df[SUM_ARBEIT]).round(2)
-mehrarbeit = (gesamt - soll).round(2)
+mehrarbeit = (gesamt - df[SOLL_COL]).round(2)   # per-employee soll
 meh_reise  = mehrarbeit.combine(df[SUM_REISE], min).round(2)
 meh_arbeit = (mehrarbeit - meh_reise).round(2)
 
-df_analyse = pd.DataFrame({
-    "Employee":               df["Employee"],
-    "Travel + Working time":  gesamt,
-    "Target hours":           round(soll, 2),
-    "Overtime total":         mehrarbeit,
-    "Overtime travel":        meh_reise,
-    "Overtime work":          meh_arbeit,
-    "Nights & Sun/holidays":  (df[REISEZEIT_CATS[0]] + df[ARBEITSZEIT_CATS[0]]).round(2),
-    "Nights":                 (df[REISEZEIT_CATS[1]] + df[ARBEITSZEIT_CATS[1]]).round(2),
-    "Sun/holidays":           (df[REISEZEIT_CATS[2]] + df[ARBEITSZEIT_CATS[2]]).round(2),
-})
+_analyse_data: dict = {
+    "Employee":                    df["Employee"],
+    "Travel + Working time":       gesamt,
+    "Target hours":                df[SOLL_COL],
+    "Overtime total":              mehrarbeit,
+    "Overtime travel (110%)":      meh_reise,
+    "Overtime work (110%)":        meh_arbeit,
+    "Nights & Sun/holidays (75%)": (df[REISEZEIT_CATS[0]] + df[ARBEITSZEIT_CATS[0]]).round(2),
+    "Nights (25%)":                (df[REISEZEIT_CATS[1]] + df[ARBEITSZEIT_CATS[1]]).round(2),
+    "Sun/holidays (50%)":          (df[REISEZEIT_CATS[2]] + df[ARBEITSZEIT_CATS[2]]).round(2),
+}
+if _has_pay:
+    _analyse_data["Bruttolohn (€)"]  = df["Bruttolohn (€)"]
+    _analyse_data["Stundenlohn (€)"] = df["Stundenlohn (€)"]
+
+df_analyse = pd.DataFrame(_analyse_data)
 
 # ── Tabs ─────────────────────────────────────────────────────────────────────
-tab1, tab2 = st.tabs(["📋 Breakdown", "📊 Analysis"])
+tab1, tab2 = st.tabs(["📊 Analysis", "📋 Breakdown"])
 
 with tab1:
     num_cols = [c for c in df.columns if c != "Employee"]
@@ -397,6 +416,13 @@ with tab1:
         format="%.2f h",
         help="Total working time − Target hours",
     )
+    if _has_pay:
+        column_config["Bruttolohn (€)"]  = st.column_config.NumberColumn(
+            label="Bruttolohn (€)", format="%.2f €"
+        )
+        column_config["Stundenlohn (€)"] = st.column_config.NumberColumn(
+            label="Stundenlohn (€)", format="%.4f €"
+        )
     st.dataframe(
         df,
         use_container_width=True,
@@ -411,11 +437,18 @@ with tab2:
         col: st.column_config.NumberColumn(label=col, format="%.2f h")
         for col in analyse_num_cols
     }
-    for col in ("Overtime total", "Overtime travel", "Overtime work"):
+    for col in ("Overtime total", "Overtime travel (110%)", "Overtime work (110%)"):
         analyse_col_config[col] = st.column_config.NumberColumn(
             label=col,
             format="%.2f h",
             help="Positive = overtime, Negative = undertime",
+        )
+    if _has_pay:
+        analyse_col_config["Bruttolohn (€)"]  = st.column_config.NumberColumn(
+            label="Bruttolohn (€)", format="%.2f €"
+        )
+        analyse_col_config["Stundenlohn (€)"] = st.column_config.NumberColumn(
+            label="Stundenlohn (€)", format="%.4f €"
         )
     st.dataframe(
         df_analyse,
@@ -430,11 +463,20 @@ st.divider()
 
 @st.cache_data(show_spinner=False)
 def make_excel(df_json: str, meta_serializable: dict, holiday_label: str) -> bytes:
-    """Excel bytes are cached to avoid re-rendering."""
+    """Full report (Analysis + Breakdown sheets) — cached."""
     import io
     from export import build_excel_bytes
     df_export = pd.read_json(io.StringIO(df_json), orient="split")
     return build_excel_bytes(df_export, meta_serializable, holiday_label)
+
+
+@st.cache_data(show_spinner=False)
+def make_excel_tax(df_json: str, meta_serializable: dict, holiday_label: str) -> bytes:
+    """Analysis-only sheet for tax office (Steuerbüro) — cached."""
+    import io
+    from export import build_breakdown_only_bytes
+    df_export = pd.read_json(io.StringIO(df_json), orient="split")
+    return build_breakdown_only_bytes(df_export, meta_serializable, holiday_label)
 
 
 meta_for_cache = {
@@ -443,18 +485,165 @@ meta_for_cache = {
     "soll_hours": soll,
 }
 
-excel_bytes = make_excel(
-    df.to_json(orient="split"),
-    meta_for_cache,
-    holiday_label,
-)
+df_json = df.to_json(orient="split")
+
+excel_bytes     = make_excel(df_json, meta_for_cache, holiday_label)
+excel_tax_bytes = make_excel_tax(df_json, meta_for_cache, holiday_label)
 
 timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
 
-st.download_button(
-    label="⬇️  Download result as Excel",
-    data=excel_bytes,
-    file_name=f"report_{timestamp}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    use_container_width=False,
+dl_col1, dl_col2, _ = st.columns([2, 2, 3])
+
+with dl_col1:
+    st.download_button(
+        label="⬇️  Full report (Analysis + Breakdown)",
+        data=excel_bytes,
+        file_name=f"report_{timestamp}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+
+with dl_col2:
+    st.download_button(
+        label="⬇️  Tax office (Analysis only)",
+        data=excel_tax_bytes,
+        file_name=f"report_tax_{timestamp}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+
+# ── Email ─────────────────────────────────────────────────────────────────────
+st.divider()
+
+_FIXED_TO  = "franka.grandes@vlahov.com"
+_FIXED_CC  = ["a.privara@m3connect.hr", "Hr@m3connect.de"]
+
+def _send_email(
+    to_addrs: list[str],
+    cc_addrs: list[str],
+    subject: str,
+    body: str,
+    attachment: bytes,
+    attachment_name: str,
+) -> None:
+    """Send an email via SMTP using credentials from st.secrets."""
+    import smtplib
+    import ssl
+    from email.mime.base import MIMEBase
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from email import encoders
+
+    cfg = st.secrets.get("email", {})
+    smtp_server = cfg.get("smtp_server", "")
+    smtp_port   = int(cfg.get("smtp_port", 587))
+    username    = cfg.get("username", "")
+    password    = cfg.get("password", "")
+
+    if not smtp_server or not username or not password:
+        raise ValueError(
+            "Email not configured. Add [email] section to Streamlit secrets "
+            "(smtp_server, smtp_port, username, password)."
+        )
+
+    msg = MIMEMultipart()
+    msg["From"]    = username
+    msg["To"]      = ", ".join(to_addrs)
+    if cc_addrs:
+        msg["Cc"]  = ", ".join(cc_addrs)
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain"))
+
+    part = MIMEBase("application", "octet-stream")
+    part.set_payload(attachment)
+    encoders.encode_base64(part)
+    part.add_header("Content-Disposition", f'attachment; filename="{attachment_name}"')
+    msg.attach(part)
+
+    all_recipients = to_addrs + cc_addrs
+    context = ssl.create_default_context()
+    with smtplib.SMTP(smtp_server, smtp_port) as server:
+        server.ehlo()
+        server.starttls(context=context)
+        server.login(username, password)
+        server.sendmail(username, all_recipients, msg.as_string())
+
+
+period_str = (
+    f"{d_from.strftime('%d.%m.%Y')} – {d_to.strftime('%d.%m.%Y')}"
+    if d_from and d_to else "–"
 )
+email_subject = f"M3 Croatia Time & Travel Report – {period_str}"
+email_body    = (
+    f"Dear Franka,\n\n"
+    f"please find attached the Croatia Time & Travel Analysis for the period {period_str}.\n\n"
+    f"Best regards,\nM3 CRO Report"
+)
+
+with st.expander("📧  Send report by email", expanded=False):
+    _email_configured = bool(st.secrets.get("email", {}).get("smtp_server"))
+
+    if not _email_configured:
+        st.info(
+            "**Email sending is not yet configured.**\n\n"
+            "To enable it, add an `[email]` section to your Streamlit secrets:\n"
+            "```toml\n"
+            "[email]\n"
+            'smtp_server = "smtp.office365.com"   # or smtp.gmail.com\n'
+            "smtp_port   = 587\n"
+            'username    = "your@email.com"\n'
+            'password    = "your-app-password"\n'
+            "```\n"
+            "For Gmail, create an **App Password** under Google Account → Security.\n"
+            "For Office 365, use your regular password or an app password if MFA is on."
+        )
+    else:
+        st.markdown(
+            f"**Fixed recipients:** {_FIXED_TO}  \n"
+            f"**CC:** {', '.join(_FIXED_CC)}"
+        )
+        st.caption("Attachment: full report (Analysis + Breakdown sheets)")
+
+        # Test send
+        st.markdown("##### Test send")
+        test_col1, test_col2 = st.columns([3, 1])
+        with test_col1:
+            test_addr = st.text_input("Test email address", placeholder="you@example.com",
+                                      label_visibility="collapsed")
+        with test_col2:
+            if st.button("Send test", use_container_width=True) and test_addr:
+                try:
+                    _send_email(
+                        to_addrs=[test_addr], cc_addrs=[],
+                        subject=f"[TEST] {email_subject}",
+                        body=f"This is a test message.\n\n{email_body}",
+                        attachment=excel_bytes,
+                        attachment_name=f"report_{timestamp}.xlsx",
+                    )
+                    st.success(f"Test email sent to {test_addr}.")
+                except Exception as exc:
+                    st.error(f"Failed: {exc}")
+
+        st.divider()
+
+        # Final send
+        st.markdown("##### Send to Steuerbüro")
+        if st.button(
+            f"📨  Send to {_FIXED_TO}",
+            type="primary",
+            use_container_width=False,
+        ):
+            try:
+                _send_email(
+                    to_addrs=[_FIXED_TO], cc_addrs=_FIXED_CC,
+                    subject=email_subject,
+                    body=email_body,
+                    attachment=excel_bytes,
+                    attachment_name=f"report_{timestamp}.xlsx",
+                )
+                st.success(
+                    f"Report sent to {_FIXED_TO} "
+                    f"(CC: {', '.join(_FIXED_CC)})."
+                )
+            except Exception as exc:
+                st.error(f"Failed: {exc}")
