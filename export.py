@@ -125,7 +125,7 @@ def _fill_analysis_sheet(
     for c_idx, col_name in enumerate(df.columns, start=1):
         if col_name == "Employee":
             ws.column_dimensions[get_column_letter(c_idx)].width = 26
-        elif col_name in PAY_COLS | {"Hourly rate (€)"}:
+        elif col_name in {"Gross salary (€)", "Hourly rate (€)"}:
             ws.column_dimensions[get_column_letter(c_idx)].width = 18
         else:
             ws.column_dimensions[get_column_letter(c_idx)].width = 15
